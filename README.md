@@ -26,18 +26,22 @@ WHOOP CLI — First-time setup
 
 1. Go to https://developer.whoop.com
 2. Create an application (apps with <10 users need no review)
-3. Set the Redirect URI to: http://localhost:8787/callback
-4. Copy your Client ID and Client Secret below
+3. Add a Redirect URI (e.g. http://localhost:8787/callback)
+4. Copy your Client ID, Client Secret and Redirect URI below
 
 Everything stays local in ~/.whoop-cli/config.json
 
 Client ID: ________
 Client Secret: ********
+Redirect URI [http://localhost:8787/callback]: ________
 
 ✓ Credentials saved
 ```
 
 Then it opens your browser for OAuth. Authorize, paste the callback URL, done. Tokens auto-refresh after that — you won't need to log in again.
+
+> **`The "redirect_uri" parameter does not match any of the OAuth 2.0 Client's pre-registered redirect urls`?**
+> The redirect URI the CLI sends (printed by `whoop auth login`) must exactly match one registered on your WHOOP app — same scheme, host, port, path and trailing slash. Either add that URI in the WHOOP developer dashboard, or point the CLI at the one you registered via `WHOOP_REDIRECT_URI` or `redirect_uri` in `~/.whoop-cli/config.json`.
 
 ## Usage
 
@@ -144,9 +148,9 @@ whoop recovery --pretty           # Shorthand
 | Flag | Description |
 |------|-------------|
 | `-d, --date <date>` | Date (YYYY-MM-DD) |
-| `-s, --start <date>` | Start date for range |
-| `-e, --end <date>` | End date for range |
-| `-l, --limit <n>` | Results per page (default: 25) |
+| `-s, --start <date>` | Start date for range (alone: through today) |
+| `-e, --end <date>` | End date for range (requires `--start`) |
+| `-l, --limit <n>` | Results per page, 1–25 (default: 25) |
 | `-a, --all` | Fetch all pages |
 | `-f, --format <fmt>` | `json`, `pretty`, or `auto` (default: auto) |
 | `-p, --pretty` | Shorthand for `--format pretty` |

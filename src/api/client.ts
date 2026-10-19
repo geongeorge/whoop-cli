@@ -1,4 +1,4 @@
-import { getValidTokens } from '../auth/tokens.js';
+import { getValidTokens, refreshAccessToken } from '../auth/tokens.js';
 import { BASE_URL, ENDPOINTS } from './endpoints.js';
 import { WhoopError, ExitCode } from '../utils/errors.js';
 import type {
@@ -15,8 +15,29 @@ import type {
 } from '../types/whoop.js';
 import { getDateRange, nowISO } from '../utils/date.js';
 
+const MAX_ERROR_DETAIL = 300;
+
+/** Pull a human-readable message out of a WHOOP error response body. */
+async function errorDetail(response: Response): Promise<string> {
+  let text: string;
+  try {
+    text = (await response.text()).trim();
+  } catch {
+    return '';
+  }
+  if (!text) return '';
+  try {
+    const json = JSON.parse(text);
+    const msg = json.message || json.error_description || json.error;
+    if (typeof msg === 'string') return msg;
+  } catch {
+    // not JSON — fall through to raw text
+  }
+  return text.length > MAX_ERROR_DETAIL ? text.slice(0, MAX_ERROR_DETAIL) + '…' : text;
+}
+
 async function request<T>(endpoint: string, params?: QueryParams): Promise<T> {
-  const tokens = await getValidTokens();
+  let tokens = await getValidTokens();
 
   const url = new URL(BASE_URL + endpoint);
   if (params?.start) url.searchParams.set('start', params.start);
@@ -24,21 +45,33 @@ async function request<T>(endpoint: string, params?: QueryParams): Promise<T> {
   if (params?.limit) url.searchParams.set('limit', String(params.limit));
   if (params?.nextToken) url.searchParams.set('nextToken', params.nextToken);
 
-  const response = await fetch(url.toString(), {
+  const send = () => fetch(url.toString(), {
     headers: {
       Authorization: `Bearer ${tokens.access_token}`,
       'Content-Type': 'application/json',
     },
   });
 
+  let response = await send();
+
+  // The access token can be revoked or expire early; refresh once and retry.
+  if (response.status === 401) {
+    tokens = await refreshAccessToken(tokens);
+    response = await send();
+  }
+
   if (!response.ok) {
+    const detail = await errorDetail(response);
+    const suffix = detail ? `: ${detail}` : '';
     if (response.status === 401) {
-      throw new WhoopError('Authentication failed', ExitCode.AUTH_ERROR, 401);
+      throw new WhoopError(`Authentication failed${suffix}. Run: whoop auth login`, ExitCode.AUTH_ERROR, 401);
     }
     if (response.status === 429) {
-      throw new WhoopError('Rate limit exceeded', ExitCode.RATE_LIMIT, 429);
+      const retryAfter = response.headers?.get('retry-after');
+      const wait = retryAfter ? ` (retry after ${retryAfter}s)` : '';
+      throw new WhoopError(`Rate limit exceeded${wait}`, ExitCode.RATE_LIMIT, 429);
     }
-    throw new WhoopError(`API request failed`, ExitCode.GENERAL_ERROR, response.status);
+    throw new WhoopError(`API request failed${suffix}`, ExitCode.GENERAL_ERROR, response.status);
   }
 
   return response.json() as Promise<T>;

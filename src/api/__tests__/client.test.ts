@@ -3,22 +3,28 @@ import { WhoopError, ExitCode } from '../../utils/errors.js';
 
 vi.mock('../../auth/tokens.js', () => ({
   getValidTokens: vi.fn().mockResolvedValue({ access_token: 'test-token' }),
+  refreshAccessToken: vi.fn().mockResolvedValue({ access_token: 'refreshed-token' }),
 }));
+
+import { refreshAccessToken } from '../../auth/tokens.js';
 
 const mockFetch = vi.fn();
 vi.stubGlobal('fetch', mockFetch);
 
-function jsonResponse(body: unknown, status = 200): Response {
+function jsonResponse(body: unknown, status = 200, headers: Record<string, string> = {}): Response {
   return {
     ok: status >= 200 && status < 300,
     status,
+    headers: new Headers(headers),
     json: () => Promise.resolve(body),
+    text: () => Promise.resolve(body == null ? '' : JSON.stringify(body)),
   } as Response;
 }
 
 describe('API client request()', () => {
   beforeEach(() => {
     mockFetch.mockReset();
+    vi.mocked(refreshAccessToken).mockClear();
   });
 
   it('makes authenticated requests with correct headers', async () => {
@@ -46,9 +52,46 @@ describe('API client request()', () => {
 
     await expect(getProfile()).rejects.toThrow(WhoopError);
     await expect(getProfile()).rejects.toMatchObject({
-      message: 'Authentication failed',
+      message: 'Authentication failed. Run: whoop auth login',
       code: ExitCode.AUTH_ERROR,
       statusCode: 401,
+    });
+  });
+
+  it('refreshes the token and retries once on 401', async () => {
+    mockFetch
+      .mockResolvedValueOnce(jsonResponse(null, 401))
+      .mockResolvedValueOnce(jsonResponse({ id: 1 }));
+
+    const { getProfile } = await import('../client.js');
+    const result = await getProfile();
+
+    expect(result).toEqual({ id: 1 });
+    expect(refreshAccessToken).toHaveBeenCalledTimes(1);
+    expect(mockFetch).toHaveBeenCalledTimes(2);
+    expect(mockFetch.mock.calls[1][1].headers.Authorization).toBe('Bearer refreshed-token');
+  });
+
+  it('includes the API error message in the thrown error', async () => {
+    mockFetch.mockResolvedValue(jsonResponse({ message: 'limit must be <= 25' }, 400));
+
+    const { getSleep } = await import('../client.js');
+
+    await expect(getSleep({ limit: 50 })).rejects.toMatchObject({
+      message: 'API request failed: limit must be <= 25',
+      code: ExitCode.GENERAL_ERROR,
+      statusCode: 400,
+    });
+  });
+
+  it('reports Retry-After on 429', async () => {
+    mockFetch.mockResolvedValue(jsonResponse(null, 429, { 'retry-after': '30' }));
+
+    const { getBody } = await import('../client.js');
+
+    await expect(getBody()).rejects.toMatchObject({
+      message: 'Rate limit exceeded (retry after 30s)',
+      code: ExitCode.RATE_LIMIT,
     });
   });
 

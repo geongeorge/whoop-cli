@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { existsSync, readFileSync, writeFileSync, mkdirSync, chmodSync } from 'node:fs';
+import { existsSync, readFileSync, writeFileSync, mkdirSync, chmodSync, openSync, statSync, unlinkSync, renameSync } from 'node:fs';
 import type { TokenData } from '../../types/whoop.js';
 
 vi.mock('node:fs');
@@ -227,7 +227,10 @@ describe('refreshAccessToken', () => {
       token_type: 'bearer',
       scope: 'read:profile offline',
     };
-    vi.mocked(readFileSync).mockReturnValue(JSON.stringify(savedTokens));
+    // Disk holds the pre-refresh tokens until saveTokens writes the new ones
+    vi.mocked(readFileSync)
+      .mockReturnValueOnce(JSON.stringify(validTokens))
+      .mockReturnValue(JSON.stringify(savedTokens));
 
     const result = await mod.refreshAccessToken(validTokens);
     expect(result.access_token).toBe('new-access');
@@ -309,5 +312,78 @@ describe('getTokenStatus', () => {
     const status = getTokenStatus();
     expect(status.authenticated).toBe(true);
     expect(status.expires_at).toBe(validTokens.expires_at);
+  });
+});
+
+describe('refresh concurrency', () => {
+  const refreshed = {
+    access_token: 'new-access',
+    refresh_token: 'new-refresh',
+    expires_in: 3600,
+    token_type: 'bearer',
+    scope: 'offline',
+  };
+
+  async function setup() {
+    process.env.WHOOP_CLIENT_ID = 'test-id';
+    process.env.WHOOP_CLIENT_SECRET = 'test-secret';
+    vi.resetModules();
+
+    // Simulated disk: tokens.json reflects whatever was last written
+    let disk = JSON.stringify(expiredTokens);
+    vi.mocked(existsSync).mockReturnValue(true);
+    vi.mocked(readFileSync).mockImplementation(() => disk);
+    vi.mocked(writeFileSync).mockImplementation((_p, data) => { disk = data as string; });
+    vi.mocked(renameSync).mockReturnValue(undefined);
+    vi.mocked(openSync).mockReturnValue(3);
+
+    const fetchMock = vi.fn(async () => {
+      await new Promise((r) => setTimeout(r, 5));
+      return { ok: true, json: () => Promise.resolve(refreshed) };
+    });
+    vi.stubGlobal('fetch', fetchMock);
+    vi.spyOn(console, 'error').mockImplementation(() => {});
+
+    const mod = await import('../tokens.js');
+    return { mod, fetchMock, setDisk: (t: TokenData) => { disk = JSON.stringify(t); } };
+  }
+
+  it('parallel callers share a single refresh request', async () => {
+    const { mod, fetchMock } = await setup();
+
+    const results = await Promise.all([
+      mod.getValidTokens(),
+      mod.getValidTokens(),
+      mod.getValidTokens(),
+      mod.getValidTokens(),
+    ]);
+
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(results.every((t) => t.refresh_token === 'new-refresh')).toBe(true);
+    vi.unstubAllGlobals();
+  });
+
+  it('skips refreshing when another process already rotated the token', async () => {
+    const { mod, fetchMock, setDisk } = await setup();
+    setDisk({ ...validTokens, refresh_token: 'rotated-elsewhere' });
+
+    const result = await mod.refreshAccessToken(expiredTokens);
+
+    expect(fetchMock).not.toHaveBeenCalled();
+    expect(result.refresh_token).toBe('rotated-elsewhere');
+    vi.unstubAllGlobals();
+  });
+
+  it('breaks a stale lock left by a crashed process', async () => {
+    const { mod, fetchMock } = await setup();
+    const eexist = Object.assign(new Error('exists'), { code: 'EEXIST' });
+    vi.mocked(openSync).mockImplementationOnce(() => { throw eexist; });
+    vi.mocked(statSync).mockReturnValue({ mtimeMs: Date.now() - 60_000 } as any);
+
+    await mod.refreshAccessToken(expiredTokens);
+
+    expect(unlinkSync).toHaveBeenCalledWith(expect.stringContaining('refresh.lock'));
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    vi.unstubAllGlobals();
   });
 });

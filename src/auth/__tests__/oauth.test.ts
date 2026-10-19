@@ -29,7 +29,8 @@ vi.mock('../tokens.js', () => ({
 
 // Import after mocks are set up
 import { login, logout, status, refresh } from '../oauth.js';
-import { getCredentials } from '../config.js';
+import { getCredentials, saveConfig } from '../config.js';
+import open from 'open';
 import { loadTokens, getTokenStatus, refreshAccessToken } from '../tokens.js';
 import { createInterface } from 'node:readline';
 
@@ -50,6 +51,39 @@ describe('login', () => {
     mockReadline('');
 
     await expect(login()).rejects.toThrow('Client ID and Client Secret are required');
+  });
+
+  it('uses the redirect URI entered during first-time setup', async () => {
+    vi.mocked(getCredentials).mockReturnValue(null);
+    const answers = ['my-id', 'https://example.com/whoop/callback', 'http://x/?state=wrong'];
+    vi.mocked(createInterface).mockImplementation(() => ({
+      question: vi.fn((_q: string, cb: (answer: string) => void) => cb(answers.shift()!)),
+      close: vi.fn(),
+    } as any));
+    const isTTY = process.stdin.isTTY;
+    const setRawMode = (process.stdin as any).setRawMode;
+    Object.defineProperty(process.stdin, 'isTTY', { value: true, configurable: true });
+    (process.stdin as any).setRawMode = vi.fn();
+    const resume = vi.spyOn(process.stdin, 'resume').mockImplementation(() => {
+      setImmediate(() => process.stdin.emit('data', 'my-secret\n'));
+      return process.stdin;
+    });
+
+    try {
+      await expect(login()).rejects.toThrow('No authorization code in callback URL');
+    } finally {
+      resume.mockRestore();
+      Object.defineProperty(process.stdin, 'isTTY', { value: isTTY, configurable: true });
+      (process.stdin as any).setRawMode = setRawMode;
+    }
+
+    expect(saveConfig).toHaveBeenCalledWith({
+      client_id: 'my-id',
+      client_secret: 'my-secret',
+      redirect_uri: 'https://example.com/whoop/callback',
+    });
+    const authUrl = new URL(vi.mocked(open).mock.calls[0][0] as string);
+    expect(authUrl.searchParams.get('redirect_uri')).toBe('https://example.com/whoop/callback');
   });
 
   it('throws on missing auth code in callback URL', async () => {
