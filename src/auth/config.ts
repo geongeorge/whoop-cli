@@ -42,7 +42,7 @@ export function getCredentials(): { clientId: string; clientSecret: string; redi
 
   const config = loadConfig();
   if (config) {
-    return { clientId: config.client_id, clientSecret: config.client_secret, redirectUri: config.redirect_uri };
+    return { clientId: config.client_id, clientSecret: config.client_secret, redirectUri: envUri || config.redirect_uri };
   }
 
   return null;

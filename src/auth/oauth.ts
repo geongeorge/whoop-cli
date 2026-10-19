@@ -70,8 +70,8 @@ async function resolveCredentials(): Promise<{ clientId: string; clientSecret: s
   console.error('');
   console.error('  1. Go to https://developer.whoop.com');
   console.error('  2. Create an application (apps with <10 users need no review)');
-  console.error('  3. Set the Redirect URI to: ' + DEFAULT_REDIRECT_URI);
-  console.error('  4. Copy your Client ID and Client Secret below');
+  console.error('  3. Add a Redirect URI (e.g. ' + DEFAULT_REDIRECT_URI + ')');
+  console.error('  4. Copy your Client ID, Client Secret and Redirect URI below');
   console.error('');
   console.error('  Everything stays local in ~/.whoop-cli/config.json');
   console.error('');
@@ -83,12 +83,16 @@ async function resolveCredentials(): Promise<{ clientId: string; clientSecret: s
     throw new WhoopError('Client ID and Client Secret are required', ExitCode.AUTH_ERROR);
   }
 
-  saveConfig({ client_id: clientId, client_secret: clientSecret, redirect_uri: DEFAULT_REDIRECT_URI });
+  // Must exactly match one of the redirect URIs registered on the WHOOP app,
+  // otherwise WHOOP rejects the authorization request.
+  const redirectUri = (await prompt(`  Redirect URI [${DEFAULT_REDIRECT_URI}]: `)) || DEFAULT_REDIRECT_URI;
+
+  saveConfig({ client_id: clientId, client_secret: clientSecret, redirect_uri: redirectUri });
   console.error('');
   console.error('  ✓ Credentials saved to ~/.whoop-cli/config.json');
   console.error('');
 
-  return { clientId, clientSecret, redirectUri: DEFAULT_REDIRECT_URI };
+  return { clientId, clientSecret, redirectUri };
 }
 
 export async function login(): Promise<void> {
@@ -102,6 +106,10 @@ export async function login(): Promise<void> {
   authUrl.searchParams.set('scope', SCOPES);
   authUrl.searchParams.set('state', state);
 
+  console.error(`Using redirect URI: ${redirectUri}`);
+  console.error('This must exactly match a Redirect URI registered on your WHOOP app at https://developer.whoop.com.');
+  console.error('To change it, set WHOOP_REDIRECT_URI or edit redirect_uri in ~/.whoop-cli/config.json.');
+  console.error('');
   console.error('Opening browser for authorization...');
   console.error('\nIf browser does not open, visit this URL:\n');
   console.error(authUrl.toString());

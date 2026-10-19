@@ -114,6 +114,24 @@ describe('getCredentials', () => {
     });
   });
 
+  it('WHOOP_REDIRECT_URI overrides config file redirect URI', () => {
+    process.env.WHOOP_REDIRECT_URI = 'http://env-uri/callback';
+
+    vi.mocked(existsSync).mockReturnValue(true);
+    vi.mocked(readFileSync).mockReturnValue(JSON.stringify({
+      client_id: 'file-id',
+      client_secret: 'file-secret',
+      redirect_uri: 'http://file-uri/callback',
+    }));
+
+    const creds = getCredentials();
+    expect(creds).toEqual({
+      clientId: 'file-id',
+      clientSecret: 'file-secret',
+      redirectUri: 'http://env-uri/callback',
+    });
+  });
+
   it('env vars override config file', () => {
     process.env.WHOOP_CLIENT_ID = 'env-id';
     process.env.WHOOP_CLIENT_SECRET = 'env-secret';

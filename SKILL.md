@@ -35,10 +35,10 @@ The CLI prompts for WHOOP API credentials on first login:
 
 1. Go to https://developer.whoop.com
 2. Create an application (apps with <10 users need no review)
-3. Set Redirect URI to `http://localhost:8787/callback`
-4. Enter Client ID and Client Secret when prompted
+3. Add a Redirect URI (e.g. `http://localhost:8787/callback`)
+4. Enter Client ID, Client Secret and that exact Redirect URI when prompted
 
-Credentials are stored in `~/.whoop-cli/config.json`. Env vars `WHOOP_CLIENT_ID` and `WHOOP_CLIENT_SECRET` override the config file.
+Credentials are stored in `~/.whoop-cli/config.json`. Env vars `WHOOP_CLIENT_ID` and `WHOOP_CLIENT_SECRET` override the config file; `WHOOP_REDIRECT_URI` overrides the redirect URI. A "redirect_uri does not match" error from WHOOP means this value differs from the one registered on the WHOOP app.
 
 ### Headless setup (servers / CI)
 
