@@ -1,6 +1,7 @@
-import { readFileSync, writeFileSync, mkdirSync, existsSync, chmodSync } from 'node:fs';
+import { readFileSync, mkdirSync, existsSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
+import { writeFileAtomic } from '../utils/fs.js';
 
 const CONFIG_DIR = join(homedir(), '.whoop-cli');
 const CONFIG_FILE = join(CONFIG_DIR, 'config.json');
@@ -24,8 +25,7 @@ export function loadConfig(): CliConfig | null {
 
 export function saveConfig(config: CliConfig): void {
   mkdirSync(CONFIG_DIR, { recursive: true, mode: 0o700 });
-  writeFileSync(CONFIG_FILE, JSON.stringify(config, null, 2));
-  chmodSync(CONFIG_FILE, 0o600);
+  writeFileAtomic(CONFIG_FILE, JSON.stringify(config, null, 2));
 }
 
 const DEFAULT_REDIRECT_URI = 'http://localhost:8787/callback';

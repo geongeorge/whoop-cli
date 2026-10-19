@@ -1,12 +1,19 @@
-import { readFileSync, writeFileSync, mkdirSync, existsSync, chmodSync } from 'node:fs';
+import { readFileSync, writeFileSync, mkdirSync, existsSync, openSync, closeSync, statSync, unlinkSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 import type { TokenData, OAuthTokenResponse } from '../types/whoop.js';
 import { getCredentials } from './config.js';
 import { WhoopError, ExitCode } from '../utils/errors.js';
+import { writeFileAtomic } from '../utils/fs.js';
 
 const CONFIG_DIR = join(homedir(), '.whoop-cli');
 const TOKEN_FILE = join(CONFIG_DIR, 'tokens.json');
+const LOCK_FILE = join(CONFIG_DIR, 'refresh.lock');
+
+// How long to wait for another process's refresh, and when to treat its lock as abandoned
+const LOCK_WAIT_MS = 15_000;
+const LOCK_STALE_MS = 30_000;
+const LOCK_POLL_MS = 100;
 
 // Refresh tokens 15 minutes before expiry to avoid race conditions
 const REFRESH_BUFFER_SECONDS = 900;
@@ -28,8 +35,7 @@ export function saveTokens(response: OAuthTokenResponse): void {
     scope: response.scope,
   };
 
-  writeFileSync(TOKEN_FILE, JSON.stringify(data, null, 2));
-  chmodSync(TOKEN_FILE, 0o600);
+  writeFileAtomic(TOKEN_FILE, JSON.stringify(data, null, 2));
 }
 
 export function loadTokens(): TokenData | null {
@@ -56,7 +62,84 @@ export function isTokenExpired(tokens: TokenData): boolean {
   return now >= tokens.expires_at - REFRESH_BUFFER_SECONDS;
 }
 
-export async function refreshAccessToken(tokens: TokenData): Promise<TokenData> {
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+/**
+ * Cross-process lock so the keepalive cron and a user command never spend the
+ * same single-use refresh token. Returns a release function.
+ */
+async function acquireRefreshLock(): Promise<() => void> {
+  ensureConfigDir();
+  const deadline = Date.now() + LOCK_WAIT_MS;
+
+  for (;;) {
+    try {
+      closeSync(openSync(LOCK_FILE, 'wx', 0o600));
+      return () => {
+        try {
+          unlinkSync(LOCK_FILE);
+        } catch {
+          // already removed
+        }
+      };
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== 'EEXIST') throw error;
+    }
+
+    try {
+      if (Date.now() - statSync(LOCK_FILE).mtimeMs > LOCK_STALE_MS) {
+        unlinkSync(LOCK_FILE);
+        continue;
+      }
+    } catch {
+      // lock released between our open and stat — retry immediately
+      continue;
+    }
+
+    if (Date.now() > deadline) {
+      throw new WhoopError('Timed out waiting for another token refresh to finish', ExitCode.AUTH_ERROR);
+    }
+    await sleep(LOCK_POLL_MS);
+  }
+}
+
+// In-process dedupe: parallel requests (e.g. `summary` fetching 4 endpoints)
+// share one refresh instead of each spending the same refresh token.
+let refreshInFlight: Promise<TokenData> | null = null;
+
+/**
+ * Exchange the refresh token for a new token pair.
+ *
+ * WHOOP refresh tokens are single-use, and reusing a spent one can revoke the
+ * whole token chain. Concurrent callers in this process share one refresh, and
+ * a file lock serializes refreshes across processes. If another caller already
+ * rotated the token, the newer tokens on disk are returned without refreshing.
+ */
+export function refreshAccessToken(tokens: TokenData): Promise<TokenData> {
+  if (!refreshInFlight) {
+    refreshInFlight = refreshWithLock(tokens).finally(() => {
+      refreshInFlight = null;
+    });
+  }
+  return refreshInFlight;
+}
+
+async function refreshWithLock(tokens: TokenData): Promise<TokenData> {
+  const release = await acquireRefreshLock();
+  try {
+    const current = loadTokens();
+    if (current && current.refresh_token && current.refresh_token !== tokens.refresh_token) {
+      return current;
+    }
+    return await doRefresh(current ?? tokens);
+  } finally {
+    release();
+  }
+}
+
+async function doRefresh(tokens: TokenData): Promise<TokenData> {
   const creds = getCredentials();
 
   if (!creds) {

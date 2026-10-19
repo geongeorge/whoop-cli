@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { existsSync, readFileSync, writeFileSync, mkdirSync } from 'node:fs';
+import { existsSync, readFileSync, writeFileSync, mkdirSync, renameSync } from 'node:fs';
 import { join } from 'node:path';
 
 vi.mock('node:fs');
@@ -65,10 +65,12 @@ describe('saveConfig', () => {
       redirect_uri: 'http://localhost:8787/callback',
     });
     expect(mkdirSync).toHaveBeenCalledWith(CONFIG_DIR, { recursive: true, mode: 0o700 });
-    expect(writeFileSync).toHaveBeenCalledWith(
-      CONFIG_FILE,
-      expect.stringContaining('"client_id": "my-id"'),
-    );
+    // Written to an owner-only temp file, then atomically renamed into place
+    const [tmpPath, data, opts] = vi.mocked(writeFileSync).mock.calls[0];
+    expect(tmpPath).toMatch(new RegExp(`^${CONFIG_FILE}\\..*\\.tmp$`));
+    expect(data).toContain('"client_id": "my-id"');
+    expect(opts).toEqual({ mode: 0o600 });
+    expect(renameSync).toHaveBeenCalledWith(tmpPath, CONFIG_FILE);
   });
 });
 

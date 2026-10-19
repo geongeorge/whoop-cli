@@ -136,7 +136,7 @@ whoop insights --date 2026-03-01 --json   # specific date, JSON
 
 - Default: WHOOP day (4am local time cutoff).
 - `--date YYYY-MM-DD` for specific dates.
-- `--start` / `--end` for range queries on data and multi commands.
+- `--start` / `--end` for range queries on data and multi commands. `--start` alone runs through today; `--end` requires `--start`. `--limit` is 1–25.
 - `--all` / `-a` to paginate through all results.
 
 ## When not to use

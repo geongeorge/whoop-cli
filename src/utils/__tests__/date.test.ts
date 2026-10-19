@@ -20,14 +20,33 @@ describe('getLocalOffset', () => {
 describe('toLocalStart / toLocalEnd', () => {
   it('appends local offset to start timestamp', () => {
     const result = toLocalStart('2026-03-03');
-    const offset = getLocalOffset();
+    const offset = getLocalOffset(new Date(2026, 2, 3, 0, 0, 0));
     expect(result).toBe(`2026-03-03T00:00:00.000${offset}`);
   });
 
   it('appends local offset to end timestamp', () => {
     const result = toLocalEnd('2026-03-03');
-    const offset = getLocalOffset();
+    const offset = getLocalOffset(new Date(2026, 2, 3, 23, 59, 59));
     expect(result).toBe(`2026-03-03T23:59:59.999${offset}`);
+  });
+});
+
+describe('DST-aware offsets', () => {
+  const originalTZ = process.env.TZ;
+  beforeEach(() => { process.env.TZ = 'America/New_York'; });
+  afterEach(() => { process.env.TZ = originalTZ; });
+
+  it('uses each date\'s own offset, not today\'s', () => {
+    expect(toLocalStart('2026-01-15')).toBe('2026-01-15T00:00:00.000-05:00');
+    expect(toLocalStart('2026-07-15')).toBe('2026-07-15T00:00:00.000-04:00');
+  });
+
+  it('handles the day DST starts (offset changes mid-day)', () => {
+    // 2026-03-08: clocks spring forward at 02:00 in New York
+    expect(getDateRange('2026-03-08')).toEqual({
+      start: '2026-03-08T00:00:00.000-05:00',
+      end: '2026-03-08T23:59:59.999-04:00',
+    });
   });
 });
 
@@ -49,8 +68,16 @@ describe('validateISODate', () => {
     expect(validateISODate('2026-13-01')).toBe(false);
   });
 
-  it('does not catch date overflow (known limitation)', () => {
-    expect(validateISODate('2026-02-30')).toBe(true);
+  it('rejects dates that do not exist', () => {
+    expect(validateISODate('2026-02-30')).toBe(false);
+    expect(validateISODate('2026-02-31')).toBe(false);
+    expect(validateISODate('2026-04-31')).toBe(false);
+    expect(validateISODate('2026-00-10')).toBe(false);
+    expect(validateISODate('2025-02-29')).toBe(false);
+  });
+
+  it('accepts leap days', () => {
+    expect(validateISODate('2028-02-29')).toBe(true);
   });
 
   it('rejects dates with extra content', () => {
@@ -68,7 +95,7 @@ describe('formatDate', () => {
 describe('getDateRange', () => {
   it('returns full calendar day with local timezone offset', () => {
     const range = getDateRange('2026-01-15');
-    const offset = getLocalOffset();
+    const offset = getLocalOffset(new Date(2026, 0, 15));
     expect(range.start).toBe(`2026-01-15T00:00:00.000${offset}`);
     expect(range.end).toBe(`2026-01-15T23:59:59.999${offset}`);
   });

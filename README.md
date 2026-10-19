@@ -148,9 +148,9 @@ whoop recovery --pretty           # Shorthand
 | Flag | Description |
 |------|-------------|
 | `-d, --date <date>` | Date (YYYY-MM-DD) |
-| `-s, --start <date>` | Start date for range |
-| `-e, --end <date>` | End date for range |
-| `-l, --limit <n>` | Results per page (default: 25) |
+| `-s, --start <date>` | Start date for range (alone: through today) |
+| `-e, --end <date>` | End date for range (requires `--start`) |
+| `-l, --limit <n>` | Results per page, 1–25 (default: 25) |
 | `-a, --all` | Fetch all pages |
 | `-f, --format <fmt>` | `json`, `pretty`, or `auto` (default: auto) |
 | `-p, --pretty` | Shorthand for `--format pretty` |

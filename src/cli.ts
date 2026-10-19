@@ -16,6 +16,42 @@ import type { DataType } from './types/whoop.js';
 
 export const program = new Command();
 
+// WHOOP's collection endpoints accept at most 25 records per page
+const MAX_LIMIT = 25;
+
+function parseLimit(value: string): number {
+  const limit = Number(value);
+  if (!Number.isInteger(limit) || limit < 1 || limit > MAX_LIMIT) {
+    throw new WhoopError(`Limit must be a whole number between 1 and ${MAX_LIMIT} (use --all to fetch every page)`, ExitCode.GENERAL_ERROR);
+  }
+  return limit;
+}
+
+function parseDate(value: string | undefined, label: string): string | undefined {
+  if (value && !validateISODate(value)) {
+    throw new WhoopError(`Invalid ${label} "${value}". Use a real date in YYYY-MM-DD format`, ExitCode.GENERAL_ERROR);
+  }
+  return value;
+}
+
+/**
+ * Validate --start/--end. --start alone means "from start through today";
+ * --end alone is ambiguous and rejected rather than silently ignored.
+ */
+function parseRange(options: { start?: string; end?: string }): { start?: string; end?: string } {
+  const start = parseDate(options.start, 'start date');
+  let end = parseDate(options.end, 'end date');
+  if (!start && !end) return {};
+  if (!start) {
+    throw new WhoopError('--end requires --start', ExitCode.GENERAL_ERROR);
+  }
+  end ??= getWhoopDay();
+  if (start > end) {
+    throw new WhoopError(`Start date ${start} is after end date ${end}`, ExitCode.GENERAL_ERROR);
+  }
+  return { start: toLocalStart(start), end: toLocalEnd(end) };
+}
+
 function getFormat(options: { format?: string; pretty?: boolean }): OutputFormat {
   if (options.pretty) return 'pretty';
   if (options.format === 'json' || options.format === 'pretty') return options.format;
@@ -67,28 +103,17 @@ function addDataCommand(name: string, description: string, dataType: DataType): 
     .option('-d, --date <date>', 'Date in ISO format (YYYY-MM-DD)')
     .option('-s, --start <date>', 'Start date for range query')
     .option('-e, --end <date>', 'End date for range query')
-    .option('-l, --limit <number>', 'Max results per page', '25')
+    .option('-l, --limit <number>', 'Max results per page (1-25)', '25')
     .option('-a, --all', 'Fetch all pages')
     .option('-f, --format <format>', 'Output format: json, pretty, auto (default: auto)', 'auto')
     .option('-p, --pretty', 'Shorthand for --format pretty')
     .action(async (options) => {
       try {
-        const date = options.date || getWhoopDay();
-        if (options.date && !validateISODate(options.date)) {
-          throw new WhoopError('Invalid date format. Use YYYY-MM-DD', ExitCode.GENERAL_ERROR);
-        }
-        if (options.start && !validateISODate(options.start)) {
-          throw new WhoopError('Invalid start date format. Use YYYY-MM-DD', ExitCode.GENERAL_ERROR);
-        }
-        if (options.end && !validateISODate(options.end)) {
-          throw new WhoopError('Invalid end date format. Use YYYY-MM-DD', ExitCode.GENERAL_ERROR);
-        }
-
+        const date = parseDate(options.date, 'date') || getWhoopDay();
         const result = await fetchData([dataType], date, {
-          limit: parseInt(options.limit, 10),
+          limit: parseLimit(options.limit),
           all: options.all,
-          start: options.start ? toLocalStart(options.start) : undefined,
-          end: options.end ? toLocalEnd(options.end) : undefined,
+          ...parseRange(options),
         });
 
         output(result, getFormat(options));
@@ -113,10 +138,7 @@ program
   .option('-f, --format <format>', 'Output format: json, pretty, auto (default: auto)', 'auto')
   .action(async (options) => {
     try {
-      const date = options.date || getWhoopDay();
-      if (options.date && !validateISODate(options.date)) {
-        throw new WhoopError('Invalid date format. Use YYYY-MM-DD', ExitCode.GENERAL_ERROR);
-      }
+      const date = parseDate(options.date, 'date') || getWhoopDay();
 
       const result = await fetchData(['recovery', 'sleep', 'cycle', 'workout'], date, { limit: 25 });
       const fmt = resolveFormat(options.format || 'auto');
@@ -169,10 +191,7 @@ program
   .option('--json', 'Shorthand for --format json')
   .action(async (options) => {
     try {
-      const date = options.date || getWhoopDay();
-      if (options.date && !validateISODate(options.date)) {
-        throw new WhoopError('Invalid date format. Use YYYY-MM-DD', ExitCode.GENERAL_ERROR);
-      }
+      const date = parseDate(options.date, 'date') || getWhoopDay();
 
       const startDate = getDaysAgo(7);
       const params = { start: toLocalStart(startDate), end: toLocalEnd(date) };
@@ -198,7 +217,7 @@ program
   .option('-d, --date <date>', 'Date in ISO format (YYYY-MM-DD)')
   .option('-s, --start <date>', 'Start date for range query')
   .option('-e, --end <date>', 'End date for range query')
-  .option('-l, --limit <number>', 'Max results per page', '25')
+  .option('-l, --limit <number>', 'Max results per page (1-25)', '25')
   .option('-a, --all', 'Fetch all pages')
   .option('-f, --format <format>', 'Output format: json, pretty, auto (default: auto)', 'auto')
   .option('-p, --pretty', 'Shorthand for --format pretty')
@@ -222,22 +241,11 @@ program
         throw new WhoopError('Specify at least one data type: --sleep, --recovery, --workout, --cycle, --profile, --body', ExitCode.GENERAL_ERROR);
       }
 
-      const date = options.date || getWhoopDay();
-      if (options.date && !validateISODate(options.date)) {
-        throw new WhoopError('Invalid date format. Use YYYY-MM-DD', ExitCode.GENERAL_ERROR);
-      }
-      if (options.start && !validateISODate(options.start)) {
-        throw new WhoopError('Invalid start date format. Use YYYY-MM-DD', ExitCode.GENERAL_ERROR);
-      }
-      if (options.end && !validateISODate(options.end)) {
-        throw new WhoopError('Invalid end date format. Use YYYY-MM-DD', ExitCode.GENERAL_ERROR);
-      }
-
+      const date = parseDate(options.date, 'date') || getWhoopDay();
       const result = await fetchData(types, date, {
-        limit: parseInt(options.limit, 10),
+        limit: parseLimit(options.limit),
         all: options.all,
-        start: options.start ? toLocalStart(options.start) : undefined,
-        end: options.end ? toLocalEnd(options.end) : undefined,
+        ...parseRange(options),
       });
 
       output(result, getFormat(options));
@@ -253,10 +261,7 @@ program
   .option('-f, --format <format>', 'Output format: json, pretty, auto (default: auto)', 'auto')
   .action(async (options) => {
     try {
-      const date = options.date || getWhoopDay();
-      if (options.date && !validateISODate(options.date)) {
-        throw new WhoopError('Invalid date format. Use YYYY-MM-DD', ExitCode.GENERAL_ERROR);
-      }
+      const date = parseDate(options.date, 'date') || getWhoopDay();
 
       const result = await fetchData(['recovery'], date, { limit: 25 });
       const tty = resolveFormat(options.format || 'auto') === 'pretty';
@@ -300,10 +305,7 @@ program
       }
 
       const needsRefresh = isTokenExpired(tokens);
-      const date = options.date || getWhoopDay();
-      if (options.date && !validateISODate(options.date)) {
-        throw new WhoopError('Invalid date format. Use YYYY-MM-DD', ExitCode.GENERAL_ERROR);
-      }
+      const date = parseDate(options.date, 'date') || getWhoopDay();
 
       const result = await fetchData(['recovery', 'sleep', 'cycle', 'workout'], date, { limit: 25 });
 
